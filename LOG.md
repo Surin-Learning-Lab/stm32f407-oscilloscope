@@ -7,3 +7,5 @@ The board has no dedicated SWD header, only the 20-pin JTAG/SWD connector (P1), 
 
 ## 2026-08-24
 the ARM GCC toolchain bundle isn't installed by the extension pack, the Bundles Manager UI failed with "no data provider registered," and installing via cube bundle install gnu-tools-for-stm32@14.3.1+st.2 plus a window reload fixed both that and the missing Devices and Boards panel.
+
+the missing GCC bundle, the "no data provider registered" failure, the reload that fixed it, and the fact that the STM32Cube GDB launch option was wrong and the ST-Link one was right.
