@@ -9,3 +9,76 @@ The board has no dedicated SWD header, only the 20-pin JTAG/SWD connector (P1), 
 the ARM GCC toolchain bundle isn't installed by the extension pack, the Bundles Manager UI failed with "no data provider registered," and installing via cube bundle install gnu-tools-for-stm32@14.3.1+st.2 plus a window reload fixed both that and the missing Devices and Boards panel.
 
 the missing GCC bundle, the "no data provider registered" failure, the reload that fixed it, and the fact that the STM32Cube GDB launch option was wrong and the ST-Link one was right.
+
+## 2026-08-24 — ADC1 first light (polled), and two debugging traps
+
+Goal: prove ADC1 converts correctly on PA0 before adding timers or DMA.
+
+### What happened
+
+Configured ADC1 with IN0 on PA0, 480-cycle sampling time, polled conversion in
+the main loop. First run read `raw = 0` for all three test conditions (PA0 to
+GND, PA0 to 3V3, PA0 floating). A floating pin should read as noise, so a
+constant zero meant the reading was not real.
+
+Ruled out the obvious causes from the Debug Console rather than by guessing:
+
+- `s1`, `s2` (HAL return codes) — both `HAL_OK`, so the ADC started and the
+  conversion completed without error or timeout.
+- `hadc1.Instance->SQR3` — `0`, so channel 0 was correctly selected.
+- `GPIOA->MODER` — `0xA8000003`. Low two bits `11` = analogue mode. PA0
+  correctly configured.
+- `hadc1.Instance->DR` — **4095** with the 3V3 jumper in place.
+
+DR held 4095 while `raw` held 0. The hardware was converting correctly the
+whole time. The bug was in my code.
+
+### Cause 1 — variable shadowing
+
+I had declared `raw` twice:
+
+    uint32_t raw = 0;              // before the loop — the one I was inspecting
+    while (1) {
+        uint32_t raw = HAL_ADC_GetValue(&hadc1);   // a SECOND, separate variable
+    }
+
+The inner `uint32_t` creates a new variable scoped to the loop body, which
+shadows the outer one. The ADC value went into the inner variable; the outer
+one stayed 0 forever. Compiles clean, no warning at default settings.
+
+Fix: drop the type from the assignment so it writes to the existing variable.
+
+    raw = HAL_ADC_GetValue(&hadc1);
+
+### Cause 2 — optimised-away locals
+
+Separately, locals that are assigned but never read get eliminated by the
+optimiser. They have no storage, so the debugger's VARIABLES panel cannot show
+them — they simply do not appear in the list. This is what happened to `s1` and
+`s2` initially, and it looked like the build had not flashed.
+
+Fix: declare debug-only variables `volatile` to force real memory storage.
+
+    volatile uint32_t raw = 0;
+
+### Results after the fix
+
+| PA0 condition | raw   |
+|---------------|-------|
+| GND           | 0     |
+| 3V3           | 4095  |
+| Floating      | 804   |
+
+Full scale at 3V3, zero at ground, arbitrary value when floating — correct
+behaviour. 12-bit ADC, 0–4095 mapping to 0–3.3 V.
+
+### Lessons
+
+- A variable reading zero while the peripheral register reads correctly means
+  the bug is in software, not hardware. Check the register directly and early.
+- Missing entries in the VARIABLES panel usually means the optimiser removed
+  them, not that the flash failed.
+- The Debug Console accepts bare expressions (`hadc1.Instance->DR`), which is
+  faster than rebuilding to add inspection variables.
+- Declarations must sit inside `USER CODE` markers or CubeMX destroys them on
+  the next regeneration.
