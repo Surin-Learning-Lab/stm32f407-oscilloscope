@@ -136,3 +136,44 @@ do.
 
 Not yet verified: the actual sample rate. A DC input looks identical at any
 rate. Confirming the timebase needs a known-frequency signal source.
+
+## 2026-08-25 — Measuring the real sample rate
+
+Verified sample rate against an ESP32 producing a 1 kHz square wave on
+GPIO18, wired to PA0 with common ground, ESP32 powered separately.
+
+Method: halt the core with pause, read consecutive buffer slots in the
+Debug Console with GDB (GNU Debugger) array syntax `adc_buf[0]@120`, and
+count samples between edges.
+
+**First measurement: 33.4 kSPS, not the 100 kSPS the timer was set for.**
+Rising edges 33-34 samples apart at 1 kHz input — exactly one third of the
+expected rate.
+
+Cause: ADC (Analogue-to-Digital Converter) conversion time, not the timer.
+Sampling time was 480 cycles (set conservatively in step 3). Total
+conversion is sampling time + 12 cycles for the 12-bit result = 492 ADC
+clock cycles. ADC clock is PCLK2 (APB2 peripheral clock) / 4 = 21 MHz, so
+one conversion takes 23.4 us. The timer fires every 10 us, so two of every
+three triggers arrived mid-conversion and were discarded. 100 / 3 = 33.3 kHz.
+
+The prescaler cannot be reduced: /2 would give 42 MHz, above the F407's
+36 MHz ADC maximum. That is a hard hardware limit.
+
+Fix: sampling time 480 cycles -> 28 cycles. 28 + 12 = 40 cycles / 21 MHz =
+1.9 us, roughly 525 kSPS capability. Did not go to the minimum 3 cycles
+(~1.4 MSPS) because short sampling times demand low source impedance, and
+source impedance becomes a design variable once the analogue front end
+exists.
+
+**Second measurement: 50 samples per half cycle at 1 kHz = 100 kSPS.**
+Confirmed.
+
+This also confirms the APB1 timer x2 rule from step 2 — TIM2 sits on a
+42 MHz peripheral bus but clocks at 84 MHz. If it did not, the measurement
+would have come out at 50 kSPS.
+
+Note on reading the circular buffer: a single discontinuity in the sample
+run is expected. The DMA write pointer is somewhere in the window when you
+pause, so samples before it are from the current pass and after it from the
+previous one.
