@@ -111,3 +111,28 @@ the core can be halted without losing data.
 Also fixed this session: PA6 was assigned as the step-2 LED and conflicts
 with ADC1_IN6. CubeMX flagged it with a warning triangle on ADC1. Reset the
 pin to free it.
+
+## 2026-08-25 — ADC to memory via DMA
+
+Replaced polling with DMA (Direct Memory Access). ADC1 DMA request added in
+CubeMX: circular mode, half-word data width on both peripheral and memory
+sides, memory address increment on, peripheral increment off. ADC parameter
+"DMA Continuous Requests" set to Enabled — circular mode on the DMA side
+alone is not sufficient, the ADC must keep issuing requests.
+
+Buffer: uint16_t adc_buf[1024] in main SRAM. Note DMA cannot access CCMRAM
+(Core Coupled Memory) on this part, so sample buffers must live in the
+128 KB main SRAM.
+
+Start order matters: HAL_ADC_Start_DMA before HAL_TIM_Base_Start, so the
+destination is armed before any conversion can complete.
+
+TIM2 back to 100 kHz (PSC 0, ARR 839). Main loop now empty.
+
+Verified by halting the core with the pause button and reading buffer slots
+directly: 4095/4094/4094 with PA0 at 3V3, 1/2/1 at GND. Acquisition
+continues while the core is halted, which is exactly what polling could not
+do.
+
+Not yet verified: the actual sample rate. A DC input looks identical at any
+rate. Confirming the timebase needs a known-frequency signal source.
