@@ -82,3 +82,32 @@ behaviour. 12-bit ADC, 0–4095 mapping to 0–3.3 V.
   faster than rebuilding to add inspection variables.
 - Declarations must sit inside `USER CODE` markers or CubeMX destroys them on
   the next regeneration.
+
+  ## 2026-08-25 — Timer-triggered ADC, and why polling is a dead end
+
+TIM2 configured for TRGO on update event, ADC1 external trigger set to
+Timer 2 Trigger Out, rising edge. Polled from the main loop.
+
+At 100 kHz trigger rate this fails immediately: HAL_ADC_PollForConversion
+returns HAL_ERROR. Cause is ADC overrun. With EOCSelection at
+ADC_EOC_SINGLE_CONV, overrun detection is enabled and every conversion must
+be read. A main loop cannot read at 100 kHz, so OVR latches and the ADC
+stops delivering data.
+
+Slowing TIM2 to 10 Hz (PSC 8399, ARR 999) and raising the poll timeout to
+200 ms proved the trigger chain works: ps = HAL_OK, raw = 4093 at 3V3,
+1 at GND. Note a real 12-bit ADC does not hit the rails exactly — one or
+two counts off is normal.
+
+But even at 10 Hz it fails after the first breakpoint stop. TIM2 keeps
+counting while the core is halted, so conversions pile up unread during
+debugging and OVR latches again. Any breakpoint guarantees an overrun.
+
+Conclusion: hardware-triggered conversion and software polling are
+incompatible by construction. This is the concrete reason for DMA — it
+services the data register at conversion rate with no CPU involvement, so
+the core can be halted without losing data.
+
+Also fixed this session: PA6 was assigned as the step-2 LED and conflicts
+with ADC1_IN6. CubeMX flagged it with a warning triangle on ADC1. Reset the
+pin to free it.
